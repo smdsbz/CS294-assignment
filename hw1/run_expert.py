@@ -16,6 +16,7 @@ import tf_util
 import gym
 import load_policy
 
+
 def main():
     import argparse
     parser = argparse.ArgumentParser()
@@ -34,7 +35,6 @@ def main():
     with tf.Session():
         tf_util.initialize()
 
-        import gym
         env = gym.make(args.envname)
         max_steps = args.max_timesteps or env.spec.timestep_limit
 
@@ -48,7 +48,7 @@ def main():
             totalr = 0.
             steps = 0
             while not done:
-                action = policy_fn(obs[None,:])
+                action = policy_fn(obs[None, :])
                 observations.append(obs)
                 actions.append(action)
                 obs, r, done, _ = env.step(action)
@@ -56,7 +56,8 @@ def main():
                 steps += 1
                 if args.render:
                     env.render()
-                if steps % 100 == 0: print("%i/%i"%(steps, max_steps))
+                if steps % 100 == 0:
+                    print("%i/%i" % (steps, max_steps))
                 if steps >= max_steps:
                     break
             returns.append(totalr)
@@ -69,6 +70,7 @@ def main():
                        'actions': np.array(actions)}
         with open('./expert_policy_{}.pkl'.format(args.envname), 'wb') as pkl:
             pickle.dump(expert_data, pkl)
+
 
 if __name__ == '__main__':
     main()
