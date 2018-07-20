@@ -35,7 +35,33 @@ def build_mlp(
 
     with tf.variable_scope(scope):
         # YOUR_CODE_HERE
-        pass
+        # - input layer
+        net = [
+            tf.layers.dense(
+                inputs=input_placeholder,
+                units=size,
+                activation=activation
+            )
+        ]
+        # - hidden layer
+        for _ in range(n_layers):
+            net.append(
+                tf.layers.dense(
+                    inputs=net[-1],
+                    units=size,
+                    activation=activation
+                )
+            )
+        # - output layer
+        net.append(
+            tf.layers.dense(
+                inputs=net[-1],
+                units=output_size,
+                activation=output_activation
+            )
+        )
+    return net[-1]
+
 
 def pathlength(path):
     return len(path["reward"])
@@ -81,7 +107,7 @@ def train_PG(exp_name='',
 
     # Make the gym environment
     env = gym.make(env_name)
-    
+
     # Is this env continuous, or discrete?
     discrete = isinstance(env.action_space, gym.spaces.Discrete)
 
@@ -123,7 +149,7 @@ def train_PG(exp_name='',
         sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32) 
 
     # Define a placeholder for advantages
-    sy_adv_n = TODO
+    sy_adv_n = tf.placeholder(shape=[None], name="adv", dtype=tf.float32)
 
 
     #========================================================================================#
@@ -167,16 +193,27 @@ def train_PG(exp_name='',
 
     if discrete:
         # YOUR_CODE_HERE
-        sy_logits_na = TODO
-        sy_sampled_ac = TODO # Hint: Use the tf.multinomial op
-        sy_logprob_n = TODO
+        sy_logits_na = build_mlp(sy_ob_no, ac_dim, 'PolicyNet_Discrete',
+                                 n_layers=n_layers, size=size)
+        sy_sampled_ac = tf.reshape(tf.multinomial(sy_logits_na, 1), [-1])
+        sy_logprob_n = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=sy_ac_na, logits=sy_logits_na)
 
     else:
         # YOUR_CODE_HERE
-        sy_mean = TODO
-        sy_logstd = TODO # logstd should just be a trainable variable, not a network output.
-        sy_sampled_ac = TODO
-        sy_logprob_n = TODO  # Hint: Use the log probability under a multivariate gaussian. 
+        sy_mean = build_mlp(sy_ob_no, ac_dim, 'PolicyNet_Continuous',
+                            n_layers=n_layers, size=size)
+        sy_logstd = tf.Variable(initial_value=tf.ones([ac_dim]),
+                                dtype=tf.float32,
+                                name='sample_std')
+        sy_sampled_ac = tf.random_normal(shape=tf.shape(sy_mean),
+                                         mean=sy_mean,
+                                         stddev=tf.exp(sy_logstd))
+        sy_logprob_n = - (      # NOTE: log-space, negate output!
+            tf.contrib.distributions.MultivariateNormalDiag(
+                loc=sy_mean, scale_diag=tf.exp(sy_logstd)) \
+            .log_prob(sy_ac_na)
+        )
 
 
 
@@ -185,7 +222,7 @@ def train_PG(exp_name='',
     # Loss Function and Training Operation
     #========================================================================================#
 
-    loss = TODO # Loss function that we'll differentiate to get the policy gradient.
+    loss = tf.reduce_mean(sy_logprob_n * sy_adv_n)
     update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
 
@@ -196,15 +233,20 @@ def train_PG(exp_name='',
 
     if nn_baseline:
         baseline_prediction = tf.squeeze(build_mlp(
-                                sy_ob_no, 
-                                1, 
+                                sy_ob_no,
+                                1,
                                 "nn_baseline",
                                 n_layers=n_layers,
                                 size=size))
         # Define placeholders for targets, a loss function and an update op for fitting a 
         # neural network baseline. These will be used to fit the neural network baseline. 
         # YOUR_CODE_HERE
-        baseline_update_op = TODO
+        baseline_targets = tf.placeholder(shape=[None],
+                                          dtype=tf.float32,
+                                          name='baseline_targets')
+        baseline_loss = tf.nn.l2_loss(baseline_targets - baseline_prediction)
+        baseline_update_op = tf.train.AdamOptimizer(learning_rate) \
+                             .minimize(baseline_loss)
 
 
     #========================================================================================#
@@ -317,7 +359,22 @@ def train_PG(exp_name='',
         #====================================================================================#
 
         # YOUR_CODE_HERE
-        q_n = TODO
+        q_n = []
+        for path in paths:
+            r = path['reward']
+            T = len(r)
+            if not reward_to_go:
+                q = [
+                    np.sum(np.power(gamma, np.arange(T)) * r) \
+                    for t in range(T)
+                ]
+            else:
+                q = [
+                    np.sum(np.power(gamma, np.arange(T - t)) * r[t:]) \
+                    for t in range(T)
+                ]
+            q_n.extend(q)
+        q_n = np.array(q_n)
 
         #====================================================================================#
         #                           ----------SECTION 5----------
@@ -333,7 +390,8 @@ def train_PG(exp_name='',
             # (mean and std) of the current or previous batch of Q-values. (Goes with Hint
             # #bl2 below.)
 
-            b_n = TODO
+            b_n = baseline_prediction.eval(feed_dict={ sy_ob_no: ob_no })
+            b_n = b_n * np.std(q_n, axis=0) + np.mean(q_n, axis=0)
             adv_n = q_n - b_n
         else:
             adv_n = q_n.copy()
@@ -347,6 +405,8 @@ def train_PG(exp_name='',
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1. 
             # YOUR_CODE_HERE
+            # HACK: `+ 1e-8` to `std` to avoid zero-devision
+            adv_n = (adv_n - adv_n.mean(axis=0)) / (adv_n.std(axis=0) + 1e-8)
             pass
 
 
@@ -366,7 +426,11 @@ def train_PG(exp_name='',
             # targets to have mean zero and std=1. (Goes with Hint #bl1 above.)
 
             # YOUR_CODE_HERE
-            pass
+            q_n = (q_n - q_n.mean(axis=0)) / (q_n.std(axis=0) + 1e-8)
+            baseline_update_op.run(feed_dict={
+                sy_ob_no: ob_no,
+                baseline_targets: q_n
+            })
 
         #====================================================================================#
         #                           ----------SECTION 4----------
@@ -380,13 +444,17 @@ def train_PG(exp_name='',
         # and after an update, and then log them below. 
 
         # YOUR_CODE_HERE
-
+        feed_data = { sy_ob_no: ob_no, sy_ac_na: ac_na, sy_adv_n: adv_n }
+        loss_before = loss.eval(feed_dict=feed_data)
+        update_op.run(feed_dict=feed_data)
+        loss_after = loss.eval(feed_dict=feed_data)
 
         # Log diagnostics
         returns = [path["reward"].sum() for path in paths]
         ep_lengths = [pathlength(path) for path in paths]
         logz.log_tabular("Time", time.time() - start)
         logz.log_tabular("Iteration", itr)
+        logz.log_tabular("LossUpdate", loss_after - loss_before)
         logz.log_tabular("AverageReturn", np.mean(returns))
         logz.log_tabular("StdReturn", np.std(returns))
         logz.log_tabular("MaxReturn", np.max(returns))
