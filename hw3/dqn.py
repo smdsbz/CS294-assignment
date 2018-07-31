@@ -211,7 +211,6 @@ def learn(env,
         #####
         
         # YOUR CODE HERE
-        # get Q network input
         buffer_index = replay_buffer.store_frame(last_obs)
         # choose action to perform
         # - perform random action at early stages
