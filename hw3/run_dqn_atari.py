@@ -110,24 +110,26 @@ def get_env(task, seed):
     set_global_seeds(seed)
     env.seed(seed)
 
-    expt_dir = '/tmp/hw3_vid_dir2/'
+    expt_dir = './tmp/hw3_vid_dir2/'
     env = wrappers.Monitor(env, osp.join(expt_dir, "gym"), force=True)
     env = wrap_deepmind(env)
 
     return env
 
 def main():
-    # Get Atari games.
-    benchmark = gym.benchmark_spec('Atari40M')
+    # # Get Atari games.
+    # benchmark = gym.benchmark_spec('Atari40M')
 
-    # Change the index to select a different game.
-    task = benchmark.tasks[3]
+    # # Change the index to select a different game.
+    # task = benchmark.tasks[3]
 
-    # Run training
-    seed = 0 # Use a seed of zero (you may want to randomize the seed!)
-    env = get_env(task, seed)
+    # # Run training
+    # seed = 0 # Use a seed of zero (you may want to randomize the seed!)
+    # env = get_env(task, seed)
+    set_global_seeds(0)
+    env = gym.make('SpaceInvaders-v0')
     session = get_session()
-    atari_learn(env, session, num_timesteps=task.max_timesteps)
+    atari_learn(env, session, num_timesteps=5000000)
 
 if __name__ == "__main__":
     main()
