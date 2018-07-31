@@ -128,6 +128,22 @@ def learn(env,
     ######
     
     # YOUR CODE HERE
+    q = q_func(obs_t_float, num_actions,
+               scope='q_func', reuse=False)
+    target_q = q_func(obs_tp1_float, num_actions,
+                      scope='target_q_func', reuse=False)
+    state_value = \
+        tf.reduce_sum(q * tf.one_hot(act_t_ph, num_actions), axis=1)
+    argmax_action_value = \
+        rew_t_ph + (1 - done_mask_ph) * gamma * tf.reduce_max(target_q, axis=1)
+    advangate = argmax_action_value - state_value
+    # define loss
+    total_error = tf.reduce_mean(tf.square(advangate))
+    # expose parameters
+    q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,
+                                    scope='q_func')
+    target_q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,
+                                           scope='target_q_func')
 
     ######
 
@@ -195,6 +211,25 @@ def learn(env,
         #####
         
         # YOUR CODE HERE
+        # get Q network input
+        buffer_index = replay_buffer.store_frame(last_obs)
+        # choose action to perform
+        # - perform random action at early stages
+        if np.random.random() < exploration.value() or not model_initialized:
+            action = env.action_space.sample()
+        # - else, do what Q-function thinks best
+        else:
+            q_network_input = replay_buffer.encode_recent_observation()
+            action_value = \
+                session.run(q, feed_dict={ obs_t_ph: [q_network_input] })[0]
+            action = tf.argmax(action_value)
+
+        # perform action
+        last_obs, rew, done, _ = env.step()
+        replay_buffer.store_effect(buffer_index, action, rew, done)
+
+        if done:
+            last_obs = env.reset()
 
         #####
 
@@ -245,6 +280,36 @@ def learn(env,
             #####
             
             # YOUR CODE HERE
+            # 3.a - sample data from replay memory
+            obs, act, rew, obs_tp1, done_mask = \
+                replay_buffer.sample(batch_size)
+
+            # 3.b - initialize network if not yet
+            if not model_initialized:
+                initialize_interdependent_variables(
+                    session, tf.global_variables(), {
+                        obs_t_ph: obs,
+                        obs_tp1_ph: obs_tp1
+                    }
+                )
+
+            # 3.c - perform training step
+            session.run(
+                train_fn,
+                feed_dict={
+                    obs_t_ph: obs,
+                    act_t_ph: act,
+                    rew_t_ph: rew,
+                    done_mask_ph: done_mask,
+                    learning_rate: optimizer_spec.lr_schedule.value(t)
+                }
+            )
+
+            # 3.d - update target function
+            num_param_updates += 1
+            if num_param_updates == target_update_freq:
+                num_param_updates = 0
+                session.run(update_target_fn)
 
             #####
 
